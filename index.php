@@ -83,6 +83,25 @@ if ($input) {
     exit;
 }
 
+// Inside index.php
+if ($_SERVER['REQUEST_METHOD'] == 'GET') {
+    $email = $_GET['tutor_email'] ?? '';
+    $conn = getTiDBConnection();
+    
+    // Fetch only questions for this specific tutor
+    $stmt = $conn->prepare("SELECT * FROM local_questions WHERE tutor_email = ?");
+    $stmt->bind_param("s", $email);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    
+    $data = [];
+    while($row = $res->fetch_assoc()) { $data[] = $row; }
+    
+    echo json_encode(["status" => "success", "data" => $data]);
+    exit;
+}
+
+
 // --- 5. BROWSER STATUS CHECK ---
 echo json_encode([
     "status" => "online",
