@@ -5,107 +5,65 @@ header("Access-Control-Allow-Methods: POST, GET, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization");
 header("Content-Type: application/json");
 
-// Handle pre-flight checks from Mobile Device
-if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
-    exit; 
-}
+if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') { exit; }
 
-// --- 2. CONFIGURATION & CREDENTIALS ---
+// --- 2. CONFIGURATION ---
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-// FIXED: Removed :// and used the correct TiDB Endpoint
-$host = 'gateway01.us-east-1.prod.aws.tidbcloud.com'; 
+$host = 'gateway01.us-east-1.prod.aws.tidbcloud.com';
 $port = 4000;
 $user = '4UEUqD3k7NuvmvP.root';
 $db   = 'signlms';
+$pass = getenv('DB_PASS') ?: '2i4QkHGpfOATuMod';
+$ssl  = "/var/www/html/isrgrootx1.pem";
 
-// SECURE: Use Render Environment Variable
-$pass = getenv('DB_PASS') ?: '2i4QkHGpfOATuMod'; 
-
-// DOCKER PATH: Correct path inside the Linux container
-$ssl  = "/var/www/html/isrgrootx1.pem"; 
-
-// --- 3. DATABASE CONNECTION FUNCTION ---
 function getTiDBConnection() {
     global $host, $user, $pass, $db, $port, $ssl;
-    
-    if (!file_exists($ssl)) {
-        throw new Exception("SSL Certificate file missing in Docker container.");
-    }
-
     $conn = mysqli_init();
     $conn->ssl_set(NULL, NULL, $ssl, NULL, NULL);
-    
     if (!$conn->real_connect($host, $user, $pass, $db, $port)) {
-        throw new Exception("TiDB Connection Failed: " . $conn->connect_error);
+        throw new Exception("Connection Failed: " . $conn->connect_error);
     }
-    
     return $conn;
 }
 
-// --- 4. HANDLE DATA FROM DEVICE (Sync to Cloud) ---
+// --- 3. SYNC FROM DEVICE TO CLOUD (POST) ---
 $input = json_decode(file_get_contents("php://input"), true);
-
-if ($input) {
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && $input) {
     try {
         $conn = getTiDBConnection();
-        
-        $sql = "INSERT INTO local_questions 
-                (q_id, question_text, correct_answer, activity_type, activity_name, version, tutor_name, tutor_email) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-        
+        $sql = "INSERT INTO local_questions (q_id, question_text, correct_answer, activity_type, activity_name, version, tutor_name, tutor_email) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
         $stmt = $conn->prepare($sql);
-        $version = isset($input['version']) ? (int)$input['version'] : 1;
-        
-        $stmt->bind_param("sssssiss", 
-            $input['q_id'], 
-            $input['question_text'], 
-            $input['correct_answer'], 
-            $input['activity_type'], 
-            $input['activity_name'], 
-            $version, 
-            $input['tutor_name'], 
-            $input['tutor_email']
-        );
-        
+        $version = $input['version'] ?? 1;
+        $stmt->bind_param("sssssiss", $input['q_id'], $input['question_text'], $input['correct_answer'], $input['activity_type'], $input['activity_name'], $version, $input['tutor_name'], $input['tutor_email']);
+       
         if ($stmt->execute()) {
-            echo json_encode(["status" => "success", "msg" => "Synced to TiDB Cloud"]);
+            echo json_encode(["status" => "success"]);
         } else {
             echo json_encode(["status" => "error", "msg" => $stmt->error]);
         }
-        
         $conn->close();
-        
     } catch (Exception $e) {
         echo json_encode(["status" => "error", "message" => $e->getMessage()]);
     }
     exit;
 }
 
-// Inside index.php
-if ($_SERVER['REQUEST_METHOD'] == 'GET') {
-    $email = $_GET['tutor_email'] ?? '';
-    $conn = getTiDBConnection();
-    
-    // Fetch only questions for this specific tutor
-    $stmt = $conn->prepare("SELECT * FROM local_questions WHERE tutor_email = ?");
-    $stmt->bind_param("s", $email);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    
-    $data = [];
-    while($row = $res->fetch_assoc()) { $data[] = $row; }
-    
-    echo json_encode(["status" => "success", "data" => $data]);
+// --- 4. FETCH FROM CLOUD TO DEVICE (GET) ---
+if ($_SERVER['REQUEST_METHOD'] == 'GET' && isset($_GET['tutor_email'])) {
+    try {
+        $email = $_GET['tutor_email'];
+        $conn = getTiDBConnection();
+        $stmt = $conn->prepare("SELECT * FROM local_questions WHERE tutor_email = ?");
+        $stmt->bind_param("s", $email);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $data = [];
+        while($row = $res->fetch_assoc()) { $data[] = $row; }
+        echo json_encode(["status" => "success", "data" => $data]);
+    } catch (Exception $e) {
+        echo json_encode(["status" => "error", "message" => $e->getMessage()]);
+    }
     exit;
 }
-
-
-// --- 5. BROWSER STATUS CHECK ---
-echo json_encode([
-    "status" => "online",
-    "service" => "ASL Tutor API",
-    "endpoint" => "Ready for Device Sync",
-    "time" => date('Y-m-d H:i:s')
-]);
