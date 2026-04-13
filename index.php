@@ -1,5 +1,5 @@
 <?php
-// --- 1. HEADERS ---
+// --- 1. HEADERS & SECURITY ---
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: POST, GET, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization");
@@ -7,77 +7,72 @@ header("Content-Type: application/json");
 
 if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') { exit; }
 
-// --- 2. CONFIG ---
 error_reporting(E_ALL);
-ini_set('display_errors', 1); // Set to 0 in production
+ini_set('display_errors', 1);
 
-$host = '://tidbcloud.com';
+// --- 2. CONFIG ---
+$host = 'gateway01.us-east-1.prod.aws.tidbcloud.com'; 
 $port = 4000;
 $user = '4UEUqD3k7NuvmvP.root';
 $db   = 'signlms';
-$pass = getenv('DB_PASS') ?: '2i4QkHGpfOATuMod';
-$ssl  = __DIR__ . "/isrgrootx1.pem"; // DYNAMIC PATH
+$pass = getenv('DB_PASS') ?: '2i4QkHGpfOATuMod'; 
+$ssl  = "/var/www/html/isrgrootx1.pem"; 
 
 function getTiDBConnection() {
     global $host, $user, $pass, $db, $port, $ssl;
-    
-    if (!file_exists($ssl)) {
-        throw new Exception("SSL Cert Missing at " . $ssl);
-    }
-
     $conn = mysqli_init();
     $conn->ssl_set(NULL, NULL, $ssl, NULL, NULL);
-    
     if (!$conn->real_connect($host, $user, $pass, $db, $port)) {
-        throw new Exception("Connection Failed: " . mysqli_connect_error());
+        throw new Exception("TiDB Connection Failed: " . $conn->connect_error);
     }
     return $conn;
 }
 
-// --- 3. THE "TEST" ENDPOINT ---
-// Visit ://your-url.com to check connection
-if (isset($_GET['test'])) {
+// --- 3. THE "PULL" LOGIC (STUDENT SYNC) ---
+// We check for 'tutor_email' specifically in the URL
+if ($_SERVER['REQUEST_METHOD'] == 'GET' && isset($_GET['tutor_email'])) {
     try {
+        $email = $_GET['tutor_email'];
         $conn = getTiDBConnection();
-        echo json_encode(["status" => "online", "database" => "connected"]);
+        
+        $stmt = $conn->prepare("SELECT * FROM local_questions WHERE tutor_email = ?");
+        $stmt->bind_param("s", $email);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        
+        $data = [];
+        while($row = $res->fetch_assoc()) {
+            $data[] = $row;
+        }
+        
+        echo json_encode(["status" => "success", "data" => $data]);
         $conn->close();
     } catch (Exception $e) {
-        echo json_encode(["status" => "offline", "error" => $e->getMessage()]);
+        echo json_encode(["status" => "error", "message" => $e->getMessage()]);
     }
-    exit;
+    exit; // STOP HERE
 }
 
-// --- 4. POST LOGIC ---
-$rawInput = file_get_contents("php://input");
-$input = json_decode($rawInput, true);
-
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    if (!$input) {
-        echo json_encode(["status" => "error", "msg" => "No JSON data received", "raw_received" => $rawInput]);
-        exit;
-    }
-
+// --- 4. THE "PUSH" LOGIC (ADMIN UPLOAD) ---
+$input = json_decode(file_get_contents("php://input"), true);
+if ($input) {
     try {
         $conn = getTiDBConnection();
-        $sql = "INSERT INTO local_questions (q_id, question_text, correct_answer, activity_type, activity_name, version, tutor_name, tutor_email) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+        $sql = "INSERT INTO local_questions 
+                (q_id, question_text, correct_answer, activity_type, activity_name, version, tutor_name, tutor_email) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
         
         $stmt = $conn->prepare($sql);
-        if (!$stmt) throw new Exception("Prepare Error: " . $conn->error);
-
-        $version = $input['version'] ?? 1;
+        $version = isset($input['version']) ? (int)$input['version'] : 1;
+        
         $stmt->bind_param("sssssiss", 
-            $input['q_id'], 
-            $input['question_text'], 
-            $input['correct_answer'], 
-            $input['activity_type'], 
-            $input['activity_name'], 
-            $version, 
-            $input['tutor_name'], 
-            $input['tutor_email']
+            $input['q_id'], $input['question_text'], $input['correct_answer'], 
+            $input['activity_type'], $input['activity_name'], $version, 
+            $input['tutor_name'], $input['tutor_email']
         );
-       
+        
         if ($stmt->execute()) {
-            echo json_encode(["status" => "success"]);
+            echo json_encode(["status" => "success", "msg" => "Synced to Cloud"]);
         } else {
             echo json_encode(["status" => "error", "msg" => $stmt->error]);
         }
@@ -85,25 +80,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     } catch (Exception $e) {
         echo json_encode(["status" => "error", "message" => $e->getMessage()]);
     }
-    exit;
+    exit; // STOP HERE
 }
 
-// --- 5. GET LOGIC ---
-if ($_SERVER['REQUEST_METHOD'] == 'GET' && isset($_GET['tutor_email'])) {
-    try {
-        $conn = getTiDBConnection();
-        $stmt = $conn->prepare("SELECT * FROM local_questions WHERE tutor_email = ?");
-        $stmt->bind_param("s", $_GET['tutor_email']);
-        $stmt->execute();
-        $res = $stmt->get_result();
-        $data = $res->fetch_all(MYSQLI_ASSOC);
-        echo json_encode(["status" => "success", "data" => $data]);
-        $conn->close();
-    } catch (Exception $e) {
-        echo json_encode(["status" => "error", "message" => $e->getMessage()]);
-    }
-    exit;
-}
-
-// Default response if no conditions met
-echo json_encode(["status" => "ready", "msg" => "Send a POST or GET request with tutor_email"]);
+// --- 5. BROWSER STATUS CHECK ---
+echo json_encode([
+    "status" => "online",
+    "service" => "ASL Tutor API",
+    "endpoint" => "Ready for Device Sync"
+]);
