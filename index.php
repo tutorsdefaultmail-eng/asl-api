@@ -10,7 +10,7 @@ error_reporting(0);
 ini_set('display_errors', 0);
 
 function getTiDBConnection() {
-    $host = '://tidbcloud.com';
+    $host = 'gateway01.us-east-1.prod.aws.tidbcloud.com';
     $port = 4000;
     $user = '4UEUqD3k7NuvmvP.root';
     $db   = 'signlms';
