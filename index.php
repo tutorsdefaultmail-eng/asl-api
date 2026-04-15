@@ -27,30 +27,30 @@ function getTiDBConnection() {
     return $conn;
 }
 
-// --- PULL LOGIC (Updated to match Python GUI behavior) ---
 if ($_SERVER['REQUEST_METHOD'] == 'GET') {
     try {
         $conn = getTiDBConnection();
-        
-        // If tutor_email is provided, we filter. 
-        // If NO email is provided, we fetch EVERYTHING (like your GUI does).
+        $data = [];
+
+        // Logic for "Button 1" (Personal + Global)
         if (isset($_GET['tutor_email']) && !empty($_GET['tutor_email'])) {
             $email = trim($_GET['tutor_email']);
+            // Fixed query: LOWER and TRIM for better matching
             $sql = "SELECT q_id, activity_name, question_text, correct_answer 
                     FROM local_questions 
-                    WHERE tutor_email = ? 
-                       OR tutor_name = ? 
+                    WHERE LOWER(TRIM(tutor_email)) = LOWER(?) 
+                       OR LOWER(TRIM(tutor_name)) = LOWER(?) 
                        OR ( (tutor_email IS NULL OR tutor_email = '') AND (tutor_name IS NULL OR tutor_name = '') )";
             $stmt = $conn->prepare($sql);
             $stmt->bind_param("ss", $email, $email);
             $stmt->execute();
             $res = $stmt->get_result();
-        } else {
-            // NO EMAIL PROVIDED -> FETCH ALL (GUI MODE)
+        } 
+        // Logic for "Button 2" (Show All / GUI Mode)
+        else {
             $res = $conn->query("SELECT q_id, activity_name, question_text, correct_answer FROM local_questions");
         }
         
-        $data = [];
         while($row = $res->fetch_assoc()) { $data[] = $row; }
 
         echo json_encode(["status" => "success", "count" => count($data), "data" => $data]);
@@ -66,25 +66,16 @@ $input = json_decode(file_get_contents("php://input"), true);
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && $input) {
     try {
         $conn = getTiDBConnection();
-        $sql = "INSERT INTO local_questions (q_id, question_text, correct_answer, activity_type, activity_name, version, tutor_name, tutor_email) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+        $sql = "INSERT INTO local_questions (q_id, question_text, correct_answer, activity_type, activity_name, version, tutor_name, tutor_email) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE question_text=VALUES(question_text), correct_answer=VALUES(correct_answer)";
         $stmt = $conn->prepare($sql);
         $version = $input['version'] ?? 1;
-        $stmt->bind_param("sssssiss", 
-            $input['q_id'], $input['question_text'], $input['correct_answer'], 
-            $input['activity_type'], $input['activity_name'], $version, 
-            $input['tutor_name'], $input['tutor_email']
-        );
-       
-        if ($stmt->execute()) {
-            echo json_encode(["status" => "success", "msg" => "Synced"]);
-        } else {
-            echo json_encode(["status" => "error", "msg" => $stmt->error]);
-        }
+        $stmt->bind_param("sssssiss", $input['q_id'], $input['question_text'], $input['correct_answer'], $input['activity_type'], $input['activity_name'], $version, $input['tutor_name'], $input['tutor_email']);
+        $stmt->execute();
+        echo json_encode(["status" => "success"]);
         $conn->close();
     } catch (Exception $e) {
         echo json_encode(["status" => "error", "message" => $e->getMessage()]);
     }
     exit;
 }
-
 echo json_encode(["status" => "online"]);
