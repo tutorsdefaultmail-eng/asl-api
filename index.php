@@ -27,15 +27,22 @@ function getTiDBConnection() {
     return $conn;
 }
 
+// --- PULL LOGIC (GET) ---
 if ($_SERVER['REQUEST_METHOD'] == 'GET') {
     try {
         $conn = getTiDBConnection();
         $data = [];
 
-        // 1. Get questions matching the email (if provided)
         if (isset($_GET['tutor_email']) && !empty($_GET['tutor_email'])) {
             $email = trim($_GET['tutor_email']);
-            $stmt = $conn->prepare("SELECT q_id, activity_name, question_text, correct_answer FROM local_questions WHERE tutor_email = ? OR tutor_name = ?");
+            
+            // USE LOWER() and TRIM() to ensure a match even if there are spaces or caps
+            $sql = "SELECT q_id, activity_name, question_text, correct_answer 
+                    FROM local_questions 
+                    WHERE LOWER(TRIM(tutor_email)) = LOWER(?) 
+                       OR LOWER(TRIM(tutor_name)) = LOWER(?)";
+            
+            $stmt = $conn->prepare($sql);
             $stmt->bind_param("ss", $email, $email);
             $stmt->execute();
             $res = $stmt->get_result();
@@ -43,10 +50,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'GET') {
             $stmt->close();
         }
 
-        // 2. ALWAYS get "Global" questions (where email is empty, null, or has spaces)
+        // ALWAYS get Global questions (Owner-less)
         $global_res = $conn->query("SELECT q_id, activity_name, question_text, correct_answer FROM local_questions WHERE tutor_email IS NULL OR TRIM(tutor_email) = ''");
         while($row = $global_res->fetch_assoc()) {
-            // Check for duplicates before adding
             if (!in_array($row['q_id'], array_column($data, 'q_id'))) {
                 $data[] = $row;
             }
@@ -59,6 +65,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'GET') {
     }
     exit;
 }
+
 
 // --- PUSH LOGIC (Insert) ---
 $input = json_decode(file_get_contents("php://input"), true);
