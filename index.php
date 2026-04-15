@@ -9,9 +9,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') { exit; }
 error_reporting(0); 
 ini_set('display_errors', 0);
 
-// --- 1. FIXED CONFIGURATION ---
 function getTiDBConnection() {
-    // We define these INSIDE to avoid "Global" scope issues on some servers
     $host = 'gateway01.us-east-1.prod.aws.tidbcloud.com';
     $port = 4000;
     $user = '4UEUqD3k7NuvmvP.root';
@@ -19,42 +17,41 @@ function getTiDBConnection() {
     $pass = getenv('DB_PASS') ?: '2i4QkHGpfOATuMod';
     $ssl  = __DIR__ . "/isrgrootx1.pem"; 
 
-    if (!file_exists($ssl)) { 
-        throw new Exception("SSL Certificate file missing at " . $ssl); 
-    }
+    if (!file_exists($ssl)) { throw new Exception("SSL Missing"); }
 
     $conn = mysqli_init();
     $conn->ssl_set(NULL, NULL, $ssl, NULL, NULL);
-    
-    // Attempt connection with explicit variables
     if (!$conn->real_connect($host, $user, $pass, $db, $port)) {
         throw new Exception("Connection Failed: " . mysqli_connect_error());
     }
-    
     return $conn;
 }
 
-// --- 2. PULL LOGIC (GET) ---
-if ($_SERVER['REQUEST_METHOD'] == 'GET' && isset($_GET['tutor_email'])) {
+// --- PULL LOGIC (Updated to match Python GUI behavior) ---
+if ($_SERVER['REQUEST_METHOD'] == 'GET') {
     try {
-        $email = trim($_GET['tutor_email']);
         $conn = getTiDBConnection();
         
-        $sql = "SELECT q_id, activity_name, question_text, correct_answer 
-                FROM local_questions 
-                WHERE tutor_email = ? 
-                   OR tutor_name = ? 
-                   OR ( (tutor_email IS NULL OR tutor_email = '') AND (tutor_name IS NULL OR tutor_name = '') )";
-        
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param("ss", $email, $email);
-        $stmt->execute();
-        $res = $stmt->get_result();
+        // If tutor_email is provided, we filter. 
+        // If NO email is provided, we fetch EVERYTHING (like your GUI does).
+        if (isset($_GET['tutor_email']) && !empty($_GET['tutor_email'])) {
+            $email = trim($_GET['tutor_email']);
+            $sql = "SELECT q_id, activity_name, question_text, correct_answer 
+                    FROM local_questions 
+                    WHERE tutor_email = ? 
+                       OR tutor_name = ? 
+                       OR ( (tutor_email IS NULL OR tutor_email = '') AND (tutor_name IS NULL OR tutor_name = '') )";
+            $stmt = $conn->prepare($sql);
+            $stmt->bind_param("ss", $email, $email);
+            $stmt->execute();
+            $res = $stmt->get_result();
+        } else {
+            // NO EMAIL PROVIDED -> FETCH ALL (GUI MODE)
+            $res = $conn->query("SELECT q_id, activity_name, question_text, correct_answer FROM local_questions");
+        }
         
         $data = [];
-        while($row = $res->fetch_assoc()) {
-            $data[] = $row;
-        }
+        while($row = $res->fetch_assoc()) { $data[] = $row; }
 
         echo json_encode(["status" => "success", "count" => count($data), "data" => $data]);
         $conn->close();
@@ -64,7 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'GET' && isset($_GET['tutor_email'])) {
     exit;
 }
 
-// --- 3. PUSH LOGIC (POST) ---
+// --- PUSH LOGIC (Insert) ---
 $input = json_decode(file_get_contents("php://input"), true);
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && $input) {
     try {
@@ -79,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $input) {
         );
        
         if ($stmt->execute()) {
-            echo json_encode(["status" => "success", "msg" => "Synced to Cloud"]);
+            echo json_encode(["status" => "success", "msg" => "Synced"]);
         } else {
             echo json_encode(["status" => "error", "msg" => $stmt->error]);
         }
@@ -90,4 +87,4 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $input) {
     exit;
 }
 
-echo json_encode(["status" => "online", "message" => "Send tutor_email to sync"]);
+echo json_encode(["status" => "online"]);
