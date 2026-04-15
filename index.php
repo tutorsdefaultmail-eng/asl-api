@@ -1,5 +1,4 @@
 <?php
-// --- 1. HEADERS & CORS ---
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: POST, GET, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization");
@@ -7,37 +6,40 @@ header("Content-Type: application/json");
 
 if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') { exit; }
 
-// --- 2. CONFIGURATION ---
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
+// Prevent HTML error output from breaking JSON
+error_reporting(0);
+ini_set('display_errors', 0);
 
 $host = '://tidbcloud.com';
 $port = 4000;
 $user = '4UEUqD3k7NuvmvP.root';
 $db   = 'signlms';
 $pass = getenv('DB_PASS') ?: '2i4QkHGpfOATuMod';
-$ssl  = "/var/www/html/isrgrootx1.pem";
+$ssl  = __DIR__ . "/isrgrootx1.pem"; 
 
 function getTiDBConnection() {
     global $host, $user, $pass, $db, $port, $ssl;
+    if (!file_exists($ssl)) { throw new Exception("SSL Missing"); }
     $conn = mysqli_init();
     $conn->ssl_set(NULL, NULL, $ssl, NULL, NULL);
-    // Use mysqli_connect_error() for better debugging
     if (!$conn->real_connect($host, $user, $pass, $db, $port)) {
-        throw new Exception("TiDB Connection Failed: " . mysqli_connect_error());
+        throw new Exception("Connection Failed: " . mysqli_connect_error());
     }
     return $conn;
 }
 
-// --- 3. PULL LOGIC (GET) ---
+// --- PULL LOGIC (The updated part) ---
 if ($_SERVER['REQUEST_METHOD'] == 'GET' && isset($_GET['tutor_email'])) {
     try {
-        $email = trim($_GET['tutor_email']); // Remove accidental spaces
+        $email = trim($_GET['tutor_email']);
         $conn = getTiDBConnection();
         $data = [];
 
-        // Query: Match tutor email OR tutor name OR Shared (empty owner)
-        $sql = "SELECT q_id, activity_name, question_text, correct_answer, tutor_name, tutor_email 
+        // This single query gets: 
+        // 1. Everything matching the email 
+        // 2. Everything matching the name
+        // 3. Everything where both are empty (The "Global" questions)
+        $sql = "SELECT q_id, activity_name, question_text, correct_answer 
                 FROM local_questions 
                 WHERE tutor_email = ? 
                    OR tutor_name = ? 
@@ -48,15 +50,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'GET' && isset($_GET['tutor_email'])) {
         $stmt->execute();
         $res = $stmt->get_result();
         
-        while($row = $res->fetch_assoc()) { 
-            $data[] = $row; 
+        while($row = $res->fetch_assoc()) {
+            $data[] = $row;
         }
 
-        if(count($data) > 0) {
-            echo json_encode(["status" => "success", "count" => count($data), "data" => $data]);
-        } else {
-            echo json_encode(["status" => "error", "message" => "No activities found", "searched_for" => $email]);
-        }
+        echo json_encode(["status" => "success", "data" => $data]);
         $conn->close();
     } catch (Exception $e) {
         echo json_encode(["status" => "error", "message" => $e->getMessage()]);
@@ -64,7 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'GET' && isset($_GET['tutor_email'])) {
     exit;
 }
 
-// --- 4. PUSH LOGIC (POST) ---
+// --- PUSH LOGIC (Insert) ---
 $input = json_decode(file_get_contents("php://input"), true);
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && $input) {
     try {
@@ -79,7 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $input) {
         );
        
         if ($stmt->execute()) {
-            echo json_encode(["status" => "success", "msg" => "Synced to Cloud"]);
+            echo json_encode(["status" => "success", "msg" => "Synced"]);
         } else {
             echo json_encode(["status" => "error", "msg" => $stmt->error]);
         }
@@ -90,9 +88,4 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $input) {
     exit;
 }
 
-// --- 5. DEFAULT STATUS ---
-echo json_encode([
-    "status" => "online", 
-    "service" => "ASL API",
-    "endpoint" => "https://asl-tutor-api.onrender.com"
-]);
+echo json_encode(["status" => "ready"]);
