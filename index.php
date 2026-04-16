@@ -5,10 +5,8 @@ header("Access-Control-Allow-Methods: POST, GET, DELETE, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization");
 header("Content-Type: application/json");
 
-// Handle Preflight
 if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') { exit; }
 
-// Use script 2's error reporting for debugging, but keep it clean
 error_reporting(E_ALL); 
 ini_set('display_errors', 0); 
 
@@ -18,24 +16,21 @@ function getTiDBConnection() {
     $port = 4000;
     $user = '4UEUqD3k7NuvmvP.root';
     $db   = 'signlms';
-    // Use environment variable or fallback to provided password
     $pass = getenv('DB_PASS') ?: '2i4QkHGpfOATuMod';
-    // Use script 1's dynamic path logic
     $ssl  = __DIR__ . "/isrgrootx1.pem"; 
 
-    if (!file_exists($ssl)) { throw new Exception("SSL Certificate Missing at $ssl"); }
+    if (!file_exists($ssl)) { throw new Exception("SSL Certificate Missing"); }
 
     $conn = mysqli_init();
     $conn->ssl_set(NULL, NULL, $ssl, NULL, NULL);
     
-    // Use script 2's more descriptive connection error reporting
     if (!$conn->real_connect($host, $user, $pass, $db, $port)) {
         throw new Exception("TiDB Connection Failed: " . mysqli_connect_error());
     }
     return $conn;
 }
 
-// ─── 3. PING (Keep Render Warm - from script 2) ────────────────
+// ─── 3. PING (Keep Render Warm) ────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] == 'GET' && isset($_GET['ping'])) {
     echo json_encode(["status" => "online", "timestamp" => time()]);
     exit;
@@ -49,7 +44,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'GET') {
         $email = isset($_GET['tutor_email']) ? trim($_GET['tutor_email']) : '';
 
         if (!empty($email)) {
-            // Fetch tutor specific + global items (Security from script 1)
             $stmt = $conn->prepare("SELECT q_id, activity_name, question_text, correct_answer, version FROM local_questions WHERE tutor_email = ? OR tutor_name = ? OR tutor_email IS NULL OR tutor_email = ''");
             $stmt->bind_param("ss", $email, $email);
             $stmt->execute();
@@ -73,20 +67,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'GET') {
 if ($_SERVER['REQUEST_METHOD'] == 'DELETE') {
     try {
         $conn = getTiDBConnection();
-        
-        // Support both URL params and JSON body for flexibilty
         $input = json_decode(file_get_contents("php://input"), true);
         $email = $_GET['tutor_email'] ?? $input['tutor_email'] ?? '';
         $q_id  = $_GET['q_id'] ?? $input['q_id'] ?? '';
 
-        if (empty($email)) { throw new Exception("Tutor email required for security."); }
+        if (empty($email)) { throw new Exception("Tutor email required."); }
 
         if (!empty($q_id)) {
-            // Delete specific item (Ownership verified)
             $stmt = $conn->prepare("DELETE FROM local_questions WHERE tutor_email = ? AND q_id = ?");
             $stmt->bind_param("ss", $email, $q_id);
         } else {
-            // Optional: Delete all for this tutor
             $stmt = $conn->prepare("DELETE FROM local_questions WHERE tutor_email = ?");
             $stmt->bind_param("s", $email);
         }
@@ -101,13 +91,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'DELETE') {
     exit;
 }
 
-// ─── 6. POST LOGIC (INSERT OR UPDATE + VERSIONING) ─────────────
+// ─── 6. POST LOGIC (INSERT OR UPDATE + DATATYPE FIX) ─────────────
 $input = json_decode(file_get_contents("php://input"), true);
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && $input) {
     try {
         $conn = getTiDBConnection();
         
-        // Includes VERSION update (from script 2)
         $sql = "INSERT INTO local_questions (q_id, question_text, correct_answer, activity_type, activity_name, version, tutor_name, tutor_email) 
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?) 
                 ON DUPLICATE KEY UPDATE 
@@ -118,11 +107,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $input) {
                 version=VALUES(version)";
 
         $stmt = $conn->prepare($sql);
-        $version = $input['version'] ?? 1;
+
+        // FIX: Explicitly cast version to integer and handle missing fields
+        $version = isset($input['version']) ? (int)$input['version'] : 1;
+        $q_id = $input['q_id'] ?? '';
+        $q_text = $input['question_text'] ?? '';
+        $c_ans = $input['correct_answer'] ?? '';
+        $a_type = $input['activity_type'] ?? '';
+        $a_name = $input['activity_name'] ?? '';
+        $t_name = $input['tutor_name'] ?? '';
+        $t_email = $input['tutor_email'] ?? '';
+
         $stmt->bind_param("sssssiss", 
-            $input['q_id'], $input['question_text'], $input['correct_answer'], 
-            $input['activity_type'], $input['activity_name'], $version, 
-            $input['tutor_name'], $input['tutor_email']
+            $q_id, $q_text, $c_ans, 
+            $a_type, $a_name, $version, 
+            $t_name, $t_email
         );
         
         if($stmt->execute()) {
@@ -137,5 +136,5 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $input) {
     exit;
 }
 
-echo json_encode(["status" => "online", "service" => "TiDB ASL Gateway"]);
+echo json_encode(["status" => "online"]);
 ?>
