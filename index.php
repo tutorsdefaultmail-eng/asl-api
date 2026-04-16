@@ -30,28 +30,31 @@ function getTiDBConnection() {
     return $conn;
 }
 
-// ─── 3. PING (Keep Render Warm) ────────────────────────────────
+// ─── 3. PING ───────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] == 'GET' && isset($_GET['ping'])) {
     echo json_encode(["status" => "online", "timestamp" => time()]);
     exit;
 }
 
-// ─── 4. GET LOGIC (FETCH / SYNC) ────────────────────────────────
+// ─── 4. GET LOGIC (Removed Version from SELECT) ────────────────
 if ($_SERVER['REQUEST_METHOD'] == 'GET') {
     try {
         $conn = getTiDBConnection();
         $data = [];
         $email = isset($_GET['tutor_email']) ? trim($_GET['tutor_email']) : '';
 
+        // Removed 'version' from SELECT to match JS tiny-cache (6 columns)
+        $query = "SELECT q_id, activity_name, question_text, correct_answer, tutor_name, tutor_email FROM local_questions";
+
         if (!empty($email)) {
-            $stmt = $conn->prepare("SELECT q_id, activity_name, question_text, correct_answer, version FROM local_questions WHERE tutor_email = ? OR tutor_name = ? OR tutor_email IS NULL OR tutor_email = ''");
+            $stmt = $conn->prepare($query . " WHERE tutor_email = ? OR tutor_name = ? OR tutor_email IS NULL OR tutor_email = ''");
             $stmt->bind_param("ss", $email, $email);
             $stmt->execute();
             $res = $stmt->get_result();
             while($row = $res->fetch_assoc()) { $data[] = $row; }
             $stmt->close();
         } else {
-            $res = $conn->query("SELECT q_id, activity_name, question_text, correct_answer, version FROM local_questions");
+            $res = $conn->query($query);
             while($row = $res->fetch_assoc()) { $data[] = $row; }
         }
 
@@ -63,7 +66,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'GET') {
     exit;
 }
 
-// ─── 5. DELETE LOGIC (Ownership Secured) ────────────────────────
+// ─── 5. DELETE LOGIC ───────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] == 'DELETE') {
     try {
         $conn = getTiDBConnection();
@@ -91,25 +94,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'DELETE') {
     exit;
 }
 
-// ─── 6. POST LOGIC (INSERT OR UPDATE + DATATYPE FIX) ─────────────
+// ─── 6. POST LOGIC (Removed Version column and 'i' type) ───────
 $input = json_decode(file_get_contents("php://input"), true);
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && $input) {
     try {
         $conn = getTiDBConnection();
         
-        $sql = "INSERT INTO local_questions (q_id, question_text, correct_answer, activity_type, activity_name, version, tutor_name, tutor_email) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?) 
+        // SQL now matches 7 strings (including activity_type)
+        $sql = "INSERT INTO local_questions (q_id, question_text, correct_answer, activity_type, activity_name, tutor_name, tutor_email) 
+                VALUES (?, ?, ?, ?, ?, ?, ?) 
                 ON DUPLICATE KEY UPDATE 
                 question_text=VALUES(question_text), 
                 correct_answer=VALUES(correct_answer), 
                 activity_name=VALUES(activity_name),
-                activity_type=VALUES(activity_type),
-                version=VALUES(version)";
+                activity_type=VALUES(activity_type)";
 
         $stmt = $conn->prepare($sql);
 
-        // FIX: Explicitly cast version to integer and handle missing fields
-        $version = isset($input['version']) ? (int)$input['version'] : 1;
         $q_id = $input['q_id'] ?? '';
         $q_text = $input['question_text'] ?? '';
         $c_ans = $input['correct_answer'] ?? '';
@@ -118,10 +119,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $input) {
         $t_name = $input['tutor_name'] ?? '';
         $t_email = $input['tutor_email'] ?? '';
 
-        $stmt->bind_param("sssssiss", 
+        // Changed to "sssssss" (Removed the 'i')
+        $stmt->bind_param("sssssss", 
             $q_id, $q_text, $c_ans, 
-            $a_type, $a_name, $version, 
-            $t_name, $t_email
+            $a_type, $a_name, $t_name, $t_email
         );
         
         if($stmt->execute()) {
@@ -134,7 +135,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $input) {
         echo json_encode(["status" => "error", "message" => $e->getMessage()]);
     }
     exit;
-}
+} 
 
 echo json_encode(["status" => "online"]);
 ?>
